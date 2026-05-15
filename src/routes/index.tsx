@@ -1,9 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
-  Camera, Upload, Settings2, Hand, Loader2, Square,
-  Activity, Image as ImageIcon, Trash2, BookOpen, Heart, ThumbsUp, ThumbsDown,
-  Smile, Frown, LifeBuoy, MessageSquare, RefreshCw,
+  Camera, Upload, Loader2, Square,
+  Activity, Github, Image as ImageIcon, Trash2, RefreshCw,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({ component: Index });
@@ -12,16 +11,6 @@ type DetectResult = { detected: boolean; sign: string | null; confidence: number
 type LogEntry = { id: number; sign: string; confidence: number; ts: string; source: "live" | "upload" };
 
 const DEFAULT_API = "http://localhost:8000";
-const SIGN_META: Record<string, { icon: any; desc: string }> = {
-  "Hello":     { icon: Hand,         desc: "Open palm wave" },
-  "Thank You": { icon: Heart,        desc: "Fingers to chin, forward" },
-  "Yes":       { icon: ThumbsUp,     desc: "Closed fist nodding" },
-  "No":        { icon: ThumbsDown,   desc: "Index + middle to thumb" },
-  "Good":      { icon: Smile,        desc: "Flat hand from chin down" },
-  "Bad":       { icon: Frown,        desc: "Flick fingers down" },
-  "Help":      { icon: LifeBuoy,     desc: "Thumb on flat palm, lift" },
-  "Sorry":     { icon: MessageSquare,desc: "Fist circling chest" },
-};
 
 function useApi() {
   const [api, setApi] = useState(DEFAULT_API);
@@ -47,10 +36,6 @@ function Header({ api, setApi, status, onRefresh }: {
   api: string; setApi: (v: string) => void;
   status: "loading" | "online" | "offline"; onRefresh: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(api);
-  useEffect(() => setDraft(api), [api]);
-
   const dot = status === "online" ? "bg-cyan" : status === "offline" ? "bg-destructive" : "bg-amber";
   const label = status === "online" ? "ONLINE" : status === "offline" ? "OFFLINE" : "BOOTING";
 
@@ -66,30 +51,21 @@ function Header({ api, setApi, status, onRefresh }: {
               <span className="text-cyan">GESTURE</span><span>SENSE</span>
             </div>
             <div className="text-[10px] text-muted-foreground tracking-[0.18em] uppercase mt-0.5">
-              Sign Language Detection Console · v2.1
+              Sign Language Detection Console
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">Backend</span>
-          {editing ? (
-            <input
-              autoFocus
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              onBlur={() => { setApi(draft); setEditing(false); }}
-              onKeyDown={e => { if (e.key === "Enter") { setApi(draft); setEditing(false); } }}
-              className="bg-input border border-border px-2 py-1 text-xs w-72 outline-none focus:border-cyan-soft"
-            />
-          ) : (
-            <button
-              onClick={() => setEditing(true)}
-              className="pill pill-cyan hover:bg-cyan-soft transition-colors"
-            >
-              <Settings2 className="size-3" /> {api.replace(/^https?:\/\//, "")}
-            </button>
-          )}
+          <a
+            href="https://github.com/rohillamanas06-commits/GestureSense"
+            target="_blank"
+            rel="noreferrer"
+            className="pill hover:text-cyan transition-colors"
+            title="Open GitHub repository"
+          >
+            <Github className="size-3" />
+          </a>
           <span className="pill">
             <span className={`size-1.5 rounded-full ${dot} ${status === "loading" ? "blink" : ""}`} />
             <span className={status === "offline" ? "text-destructive" : status === "online" ? "text-cyan" : "text-amber"}>
@@ -134,10 +110,7 @@ function AlertBar({ status }: { status: "loading" | "online" | "offline" }) {
     <div className="max-w-[1400px] mx-auto px-6 mb-6">
       <div className="flex items-center justify-between gap-4 border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-xs uppercase tracking-[0.1em]">
         <span className="text-destructive">
-          ▲ Backend unreachable. Verify your FastAPI server is running and the URL is correct.
-        </span>
-        <span className="text-muted-foreground hidden md:block">
-          Hint: <span className="text-cyan">uvicorn app:app --host 0.0.0.0 --port 8000</span>
+          ▲ Backend unreachable.
         </span>
       </div>
     </div>
@@ -313,7 +286,7 @@ function UploadPanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "i
       </div>
 
       <div className="p-3 flex-1 flex flex-col gap-3">
-        <div className="relative flex-1 min-h-[280px] border border-dashed border-border bg-background/40 grid-bg corner-brackets overflow-hidden">
+        <div className="relative flex-1 min-h-[280px] max-h-[400px] border border-dashed border-border bg-background/40 grid-bg corner-brackets overflow-hidden">
           <span className="br" />
           {preview ? (
             <img src={preview} alt="upload" className="w-full h-full object-contain" />
@@ -370,7 +343,15 @@ function UploadPanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "i
           >
             <Upload className="size-3.5" /> Choose Image
           </button>
-          <span className="pill">POST /detect/upload</span>
+          {preview && (
+            <button
+              onClick={() => { setPreview(null); setResult(null); setMsg(null); }}
+              className="flex-1 flex items-center justify-center gap-2 border border-destructive/50 text-destructive text-xs uppercase tracking-[0.18em] py-2 hover:bg-destructive/10 transition-colors"
+              title="Remove image"
+            >
+              ✕ Remove
+            </button>
+          )}
         </div>
         {msg && <div className="text-[10px] text-muted-foreground uppercase tracking-widest">{msg}</div>}
       </div>
@@ -417,97 +398,14 @@ function LogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
   );
 }
 
-// ─── SUPPORTED SIGNS ─────────────────────────────────────────────────────────
-function SignsPanel({ signs }: { signs: string[] }) {
-  return (
-    <div className="panel">
-      <div className="panel-header">
-        <span className="flex items-center gap-2"><BookOpen className="size-3.5" /> Supported Signs</span>
-        <span className="text-[10px] text-muted-foreground tracking-widest">{signs.length} / 8</span>
-      </div>
-      <div className="p-3 grid grid-cols-2 gap-2">
-        {(signs.length ? signs : Object.keys(SIGN_META)).map((s, i) => {
-          const meta = SIGN_META[s] ?? { icon: Hand, desc: "—" };
-          const Icon = meta.icon;
-          return (
-            <div key={s} className="border border-border bg-background/40 p-2.5 hover:border-cyan-soft hover:bg-cyan-soft transition-colors group">
-              <div className="flex items-start justify-between mb-2">
-                <Icon className="size-4 text-cyan" />
-                <span className="text-[9px] text-muted-foreground tabular-nums">#{String(i + 1).padStart(2, "0")}</span>
-              </div>
-              <div className="text-xs uppercase tracking-wider font-medium">{s}</div>
-              <div className="text-[10px] text-muted-foreground mt-1 normal-case tracking-normal leading-snug">{meta.desc}</div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
-// ─── DATASET STRIP ───────────────────────────────────────────────────────────
-function DatasetStrip({ api, refreshKey }: { api: string; refreshKey: number }) {
-  const [d, setD] = useState<any>(null);
-  useEffect(() => { fetch(`${api}/dataset`).then(r => r.json()).then(setD).catch(() => setD(null)); }, [api, refreshKey]);
-  if (!d?.dataset) return null;
-  const meta = d.dataset;
-  return (
-    <div className="max-w-[1400px] mx-auto px-6 mt-6">
-      <div className="panel">
-        <div className="panel-header">
-          <span className="flex items-center gap-2">▣ Dataset Telemetry</span>
-          <span className="text-[10px] text-muted-foreground tracking-widest normal-case">GET /dataset</span>
-        </div>
-        <div className="grid md:grid-cols-3 gap-px bg-border">
-          <div className="bg-card p-4">
-            <div className="text-[10px] tracking-widest text-muted-foreground uppercase">Source</div>
-            <div className="text-xs mt-1 truncate">{meta.source}</div>
-          </div>
-          <div className="bg-card p-4">
-            <div className="text-[10px] tracking-widest text-muted-foreground uppercase">Total Samples</div>
-            <div className="text-xl mt-1 text-cyan tabular-nums">{meta.total_samples?.toLocaleString() ?? "—"}</div>
-          </div>
-          <div className="bg-card p-4">
-            <div className="text-[10px] tracking-widest text-muted-foreground uppercase">MediaPipe Skip Rate</div>
-            <div className="text-xl mt-1 text-cyan tabular-nums">{meta.mediapipe_skip_rate ?? "—"}</div>
-          </div>
-        </div>
-        {meta.class_distribution && (
-          <div className="p-4 border-t border-border">
-            <div className="text-[10px] tracking-widest text-muted-foreground uppercase mb-3">Class Distribution</div>
-            <div className="grid md:grid-cols-2 gap-x-6 gap-y-1.5">
-              {Object.entries(meta.class_distribution).map(([k, v]) => {
-                const max = Math.max(...Object.values(meta.class_distribution).map(Number));
-                const pct = (Number(v) / max) * 100;
-                return (
-                  <div key={k} className="flex items-center gap-3 text-xs">
-                    <span className="w-24 text-muted-foreground">{k}</span>
-                    <div className="flex-1 h-1 bg-input">
-                      <div className="h-full bg-cyan/70" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="w-12 text-right tabular-nums text-cyan">{String(v)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ─── INDEX ───────────────────────────────────────────────────────────────────
 function Index() {
   const [api, setApi] = useApi();
   const [refreshKey, setRefreshKey] = useState(0);
   const status = useHealth(api, refreshKey);
-  const [signs, setSigns] = useState<string[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
-
-  useEffect(() => {
-    fetch(`${api}/signs`).then(r => r.json()).then(d => setSigns(d.signs ?? [])).catch(() => {});
-  }, [api, refreshKey]);
 
   const addLog = (e: Omit<LogEntry, "id" | "ts">) => {
     setLog(prev => [{
@@ -520,25 +418,21 @@ function Index() {
   return (
     <div className="min-h-screen">
       <Header api={api} setApi={setApi} status={status} onRefresh={() => setRefreshKey(k => k + 1)} />
-      <TitleBar signCount={signs.length} />
       <AlertBar status={status} />
 
-      <main className="max-w-[1400px] mx-auto px-6 pb-10 grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <LivePanel api={api} onLog={addLog} />
-        <UploadPanel api={api} onLog={addLog} />
-        <div className="flex flex-col gap-4">
+      <main className="max-w-[1400px] mx-auto px-6 pb-10">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <LivePanel api={api} onLog={addLog} />
+          <UploadPanel api={api} onLog={addLog} />
+        </div>
+        <div className="mt-4">
           <LogPanel entries={log} onClear={() => setLog([])} />
-          <SignsPanel signs={signs} />
         </div>
       </main>
 
-      <DatasetStrip api={api} refreshKey={refreshKey} />
-
       <footer className="max-w-[1400px] mx-auto px-6 py-6 mt-6 border-t border-border flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-        <span>► GestureSense Console · v2.1 · Local Inference</span>
-        <a href={`${api}/docs`} target="_blank" rel="noreferrer" className="hover:text-cyan transition-colors">
-          OpenAPI Docs →
-        </a>
+        <span>► GestureSense Console</span>
+        <a href="/about" className="hover:text-cyan transition-colors">About</a>
       </footer>
     </div>
   );

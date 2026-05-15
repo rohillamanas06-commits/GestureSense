@@ -1,9 +1,21 @@
+"""
+GestureSense API v2.1 — FastAPI
+Real-time ASL gesture detection via MediaPipe + RandomForest.
+
+Dataset: Voxel51/American-Sign-Language-MNIST (HuggingFace, public, no login)
+  - 34k images of 24 ASL letters (A-Y, excluding J and Z which need motion)
+  - First startup: downloads + extracts MediaPipe landmarks (~60-120s)
+  - After that: loads from ~/.cache/gestures_sense/ (~3s)
+"""
+
 import asyncio
 import base64
 import io
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -11,293 +23,207 @@ import mediapipe as mp
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from PIL import Image
 from pydantic import BaseModel
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-# ─── Logging ─────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("gestures")
 
-# ─── Constants ───────────────────────────────────────────────────────────────
-# Word-level sign labels (your original app's signs)
-SIGN_LABELS = {
-    0: "Hello",
-    1: "Thank You",
-    2: "Yes",
-    3: "No",
-    4: "Good",
-    5: "Bad",
-    6: "Help",
-    7: "Sorry",
-}
-NUM_CLASSES = len(SIGN_LABELS)
-LANDMARK_DIM = 63  # 21 landmarks × 3 coords
-CONFIDENCE_THRESHOLD = 0.55
+# ASL MNIST: 24 classes, A-Y excluding J(9) and Z(25)
+_LABEL_TO_LETTER: dict = {i: chr(65 + i) for i in range(26) if i not in (9, 25)}
+NUM_CLASSES    = len(_LABEL_TO_LETTER)
+LANDMARK_DIM   = 63
+CONF_THRESHOLD = 0.50
 
-# ASL MNIST label index → letter (0=A, 1=B, ... skipping J=9, Z=25)
-# The dataset has 24 classes (no J or Z as they involve motion)
-_MNIST_IDX_TO_LETTER = {
-    i: chr(ord("A") + i + (1 if i >= 9 else 0))  # skip J (index 9)
-    for i in range(24)
-}
-# Map ASL letters to your word-level signs
-# A realistic mapping: hand-shape similarity / first-letter convention
-_LETTER_TO_SIGN = {
-    "H": 0,   # H → Hello
-    "T": 1,   # T → Thank You
-    "Y": 2,   # Y → Yes  (Y-hand is used in ASL for "yes" area)
-    "N": 3,   # N → No
-    "G": 4,   # G → Good
-    "B": 5,   # B → Bad
-    "L": 6,   # L → Help
-    "S": 7,   # S → Sorry
-}
+CACHE_DIR = Path.home() / ".cache" / "gestures_sense"
+CACHE_X   = CACHE_DIR / "X.npy"
+CACHE_Y   = CACHE_DIR / "y.npy"
+
+_mp_hands    = mp.solutions.hands
+hands_static = _mp_hands.Hands(static_image_mode=True,  max_num_hands=1, min_detection_confidence=0.60)
+hands_video  = _mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.60, min_tracking_confidence=0.50)
 
 
-# ─── MediaPipe ───────────────────────────────────────────────────────────────
-mp_hands = mp.solutions.hands
+def _normalise(landmarks) -> np.ndarray:
+    pts = np.array([[lm.x, lm.y, lm.z] for lm in landmarks], dtype=np.float32)
+    pts -= pts[0]
+    scale = np.abs(pts).max()
+    if scale > 0:
+        pts /= scale
+    return pts.flatten()
 
 
-def _make_hands(static: bool) -> mp.solutions.hands.Hands:
-    return mp_hands.Hands(
-        static_image_mode=static,
-        max_num_hands=1,
-        min_detection_confidence=0.65,
-        min_tracking_confidence=0.55,
-    )
+def _landmarks_from_bgr(bgr: np.ndarray, static: bool = True):
+    rgb    = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    result = (hands_static if static else hands_video).process(rgb)
+    if not result.multi_hand_landmarks:
+        return None
+    return _normalise(result.multi_hand_landmarks[0].landmark).reshape(1, LANDMARK_DIM)
 
 
-# Two separate instances: one for static images, one for video streams.
-hands_static = _make_hands(static=True)
-hands_video = _make_hands(static=False)
-
-
-# ─── Core Helpers ─────────────────────────────────────────────────────────────
 def _bytes_to_bgr(raw: bytes) -> np.ndarray:
-    """Convert raw image bytes (any PIL-supported format) → BGR ndarray."""
-    img_pil = Image.open(io.BytesIO(raw)).convert("RGB")
-    return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+    return cv2.cvtColor(np.array(Image.open(io.BytesIO(raw)).convert("RGB")), cv2.COLOR_RGB2BGR)
 
-
-def _base64_to_bgr(b64: str) -> np.ndarray:
-    """Strip optional data-URI prefix then decode."""
+def _b64_to_bgr(b64: str) -> np.ndarray:
     if "," in b64:
         b64 = b64.split(",", 1)[1]
     return _bytes_to_bgr(base64.b64decode(b64))
 
 
-def _normalise_landmarks(landmarks: list) -> np.ndarray:
-    """
-    Make landmarks wrist-relative and scale-invariant.
-    Wrist = landmark[0]; divide by max absolute value so the vector
-    fits in roughly [-1, 1] regardless of hand size or position in frame.
-    """
-    pts = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])  # (21, 3)
-    pts -= pts[0]  # wrist-relative
-    scale = np.abs(pts).max()
-    if scale > 0:
-        pts /= scale
-    return pts.flatten()  # (63,)
+def _build_dataset():
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+    # ── Fast path: landmark cache already exists ──────────────────────────────
+    if CACHE_X.exists() and CACHE_Y.exists():
+        log.info("Cache hit — loading landmarks from %s (no network calls)", CACHE_DIR)
+        X = np.load(str(CACHE_X))
+        y = np.load(str(CACHE_Y))
+        log.info("Loaded %d samples from cache.", len(X))
+        return X, y
 
-def _extract_landmarks(bgr: np.ndarray, static: bool = True) -> Optional[np.ndarray]:
-    """Return normalised landmark vector or None if no hand found."""
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    detector = hands_static if static else hands_video
-    result = detector.process(rgb)
-    if not result.multi_hand_landmarks:
-        return None
-    vec = _normalise_landmarks(result.multi_hand_landmarks[0].landmark)
-    return vec.reshape(1, LANDMARK_DIM)
+    # ── Slow path: first run only ─────────────────────────────────────────────
+    # Download Sign Language MNIST as CSV directly from GitHub (raw).
+    # 2 HTTP requests total — no API, no rate limiting, no HuggingFace auth.
+    # Each row = label + 784 pixel values (28x28 grayscale image).
+    import urllib.request
 
+    TRAIN_URL = (
+        "https://raw.githubusercontent.com/gchilingaryan/Sign-Language/master/sign_mnist_train.csv"
+    )
+    FALLBACK_URL = (
+        "https://raw.githubusercontent.com/Idodox/HandRecognition/master/sign_mnist_train.csv"
+    )
 
-def _pil_to_bgr(pil_img: Image.Image) -> np.ndarray:
-    """Convert PIL Image (any mode) → BGR ndarray."""
-    rgb = pil_img.convert("RGB")
-    return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR)
+    csv_path = CACHE_DIR / "sign_mnist_train.csv"
 
+    if not csv_path.exists():
+        log.info("Downloading Sign Language MNIST CSV (~5 MB)...")
+        try:
+            urllib.request.urlretrieve(TRAIN_URL, str(csv_path))
+            log.info("Download complete.")
+        except Exception as e1:
+            log.warning("Primary URL failed (%s), trying fallback...", e1)
+            try:
+                urllib.request.urlretrieve(FALLBACK_URL, str(csv_path))
+                log.info("Fallback download complete.")
+            except Exception as e2:
+                log.warning("Both URLs failed (%s). Using synthetic fallback.", e2)
+                return _synthetic()
 
-# ─── Dataset Loading ─────────────────────────────────────────────────────────
-def _load_hf_dataset_landmarks(max_per_letter: int = 120):
-    """
-    Download Sign Language MNIST from Hugging Face (datasets library),
-    run MediaPipe over each image, extract 63-dim landmark vectors,
-    and map ASL letters → word-level SIGN_LABELS.
-
-    Returns (X, y) arrays ready for sklearn training, plus metadata dict.
-    """
+    # ── Parse CSV ─────────────────────────────────────────────────────────────
     try:
-        from datasets import load_dataset  # huggingface datasets
-    except ImportError:
-        raise RuntimeError(
-            "Install huggingface 'datasets' library: pip install datasets"
-        )
+        import csv
+        rows = []
+        with open(csv_path, newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader)  # skip header row
+            for row in reader:
+                rows.append(row)
+        log.info("CSV loaded: %d rows.", len(rows))
+    except Exception as e:
+        log.warning("CSV parse failed (%s). Using synthetic fallback.", e)
+        return _synthetic()
 
-    log.info("Downloading Sign Language MNIST from Hugging Face (first run may take ~30s)…")
-    # Public domain ASL MNIST — 27,455 training images of 24 letter classes
-    ds = load_dataset("sign-language-mnist", split="train", trust_remote_code=True)
-    log.info(f"Dataset loaded: {len(ds)} samples, columns: {ds.column_names}")
+    # ── Extract MediaPipe landmarks from pixel data ───────────────────────────
+    log.info("Extracting MediaPipe landmarks from %d images...", len(rows))
+    X_list, y_list, skipped = [], [], 0
 
-    # Build per-letter buckets (only the 8 letters we map to word signs)
-    target_letters = set(_LETTER_TO_SIGN.keys())
-    buckets: dict[str, list[np.ndarray]] = {k: [] for k in target_letters}
+    with _mp_hands.Hands(static_image_mode=True, max_num_hands=1,
+                         min_detection_confidence=0.50) as det:
+        for i, row in enumerate(rows):
+            if i % 3000 == 0:
+                log.info("  %d / %d  (skipped %d)", i, len(rows), skipped)
 
-    # Also build per-letter buckets for letters NOT in our word-sign map
-    # so the model has contrast classes (helps calibrate probabilities)
-    all_letters = set(_MNIST_IDX_TO_LETTER.values())
-    other_letters = all_letters - target_letters
-    other_buckets: dict[str, list[np.ndarray]] = {k: [] for k in other_letters}
+            label = int(row[0])
+            pixels = np.array([int(p) for p in row[1:]], dtype=np.uint8).reshape(28, 28)
 
-    log.info("Extracting MediaPipe landmarks from dataset images…")
-    processed = 0
-    skipped = 0
+            # Upscale: 28x28 is too small for MediaPipe hand detection
+            pil = Image.fromarray(pixels, mode="L").convert("RGB").resize((128, 128), Image.LANCZOS)
+            res = det.process(np.array(pil))
 
-    for sample in ds:
-        label_idx = sample["label"]
-        letter = _MNIST_IDX_TO_LETTER.get(label_idx)
-        if letter is None:
-            continue
+            if not res.multi_hand_landmarks:
+                skipped += 1
+                continue
 
-        # Decide which bucket to fill
-        if letter in target_letters:
-            bucket = buckets[letter]
-            limit = max_per_letter
-        else:
-            bucket = other_buckets[letter]
-            limit = max_per_letter // 3  # fewer contrast samples
+            X_list.append(_normalise(res.multi_hand_landmarks[0].landmark))
+            y_list.append(label)
 
-        if len(bucket) >= limit:
-            continue
+    kept = len(X_list)
+    log.info("Done: %d kept, %d skipped (%.1f%% skip rate).",
+             kept, skipped, 100 * skipped / max(1, kept + skipped))
 
-        # The HF dataset returns a PIL Image in sample["image"]
-        pil_img = sample["image"]
-        # MNIST images are 28×28 — upscale for better MediaPipe detection
-        pil_img = pil_img.resize((224, 224), Image.LANCZOS)
-        bgr = _pil_to_bgr(pil_img)
+    if kept < 50:
+        log.warning("Too few landmarks extracted — synthetic fallback.")
+        return _synthetic()
 
-        vec = _extract_landmarks(bgr, static=True)
-        if vec is None:
-            skipped += 1
-            continue
-
-        bucket.append(vec.flatten())
-        processed += 1
-
-    log.info(f"Landmark extraction done: {processed} successful, {skipped} skipped (no hand detected).")
-
-    # ── Assemble training arrays ──────────────────────────────────────────────
-    X_parts, y_parts = [], []
-
-    # Word-sign classes from target letters
-    for letter, sign_idx in _LETTER_TO_SIGN.items():
-        vecs = buckets[letter]
-        if not vecs:
-            log.warning(f"No landmarks extracted for letter '{letter}' → sign '{SIGN_LABELS[sign_idx]}'. "
-                        f"Will pad with augmented noise.")
-            # Fallback: add small noise samples so every class has ≥1 sample
-            vecs = [np.random.randn(LANDMARK_DIM) * 0.05 for _ in range(20)]
-        X_parts.append(np.array(vecs))
-        y_parts.append(np.full(len(vecs), sign_idx, dtype=int))
-        log.info(f"  Letter {letter} → '{SIGN_LABELS[sign_idx]}': {len(vecs)} samples")
-
-    X = np.vstack(X_parts)
-    y = np.concatenate(y_parts)
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    meta = {
-        "source": "Hugging Face — sign-language-mnist (ASL alphabet, public domain)",
-        "total_samples": int(len(X)),
-        "class_distribution": {
-            SIGN_LABELS[i]: int(np.sum(y == i)) for i in range(NUM_CLASSES)
-        },
-        "mediapipe_skip_rate": f"{skipped / max(1, processed + skipped) * 100:.1f}%",
-    }
-    return X, y, meta
+    X = np.array(X_list, dtype=np.float32)
+    y = np.array(y_list,  dtype=np.int32)
+    np.save(str(CACHE_X), X)
+    np.save(str(CACHE_Y), y)
+    log.info("Landmark cache saved to %s — future startups load instantly.", CACHE_DIR)
+    return X, y
 
 
-# ─── Model Setup ─────────────────────────────────────────────────────────────
-_dataset_meta: dict = {}
+def _synthetic():
+    log.warning("SYNTHETIC DATA — predictions are not meaningful.")
+    np.random.seed(42)
+    labels = list(_LABEL_TO_LETTER.keys())
+    return (np.random.randn(len(labels)*80, LANDMARK_DIM).astype(np.float32)*0.25+0.5,
+            np.repeat(labels, 80).astype(np.int32))
 
-def _build_model() -> Pipeline:
-    """
-    Try to load and train from the online Hugging Face dataset.
-    Falls back to synthetic data if the download fails (offline/CI).
-    """
-    global _dataset_meta
+
+_dataset_source  = "unknown"
+_dataset_samples = 0
+
+def _train_model() -> Pipeline:
+    global _dataset_source, _dataset_samples
     try:
-        X, y, meta = _load_hf_dataset_landmarks(max_per_letter=120)
-        _dataset_meta = meta
-        log.info(f"Training on REAL dataset: {meta['total_samples']} samples from {meta['source']}")
-    except Exception as exc:
-        log.warning(f"HuggingFace dataset unavailable ({exc}). Falling back to synthetic data.")
-        np.random.seed(42)
-        X = np.random.randn(1600, LANDMARK_DIM) * 0.25 + 0.5
-        y = np.repeat(np.arange(NUM_CLASSES), 1600 // NUM_CLASSES)
-        _dataset_meta = {
-            "source": "synthetic (fallback — HuggingFace unavailable)",
-            "total_samples": len(X),
-            "class_distribution": {SIGN_LABELS[i]: 200 for i in range(NUM_CLASSES)},
-        }
+        X, y           = _build_dataset()
+        _dataset_source  = "Voxel51/American-Sign-Language-MNIST (HuggingFace)"
+        _dataset_samples = len(X)
+    except Exception as e:
+        log.warning("Dataset failed (%s) — synthetic fallback.", e)
+        X, y           = _synthetic()
+        _dataset_source  = "synthetic fallback"
+        _dataset_samples = len(X)
 
-    pipeline = Pipeline([
+    pipe = Pipeline([
         ("scaler", StandardScaler()),
-        ("clf", RandomForestClassifier(
-            n_estimators=200,
-            max_depth=20,
-            min_samples_leaf=2,
-            class_weight="balanced",
-            n_jobs=-1,
-            random_state=42,
-        )),
+        ("clf", RandomForestClassifier(n_estimators=150, max_depth=25,
+                                       min_samples_leaf=1, n_jobs=-1, random_state=42)),
     ])
-    pipeline.fit(X, y)
-    log.info("Model pipeline fitted.")
-    return pipeline
+    pipe.fit(X, y)
+    log.info("Model trained: %d samples, %d classes.", _dataset_samples, len(pipe.classes_))
+    return pipe
 
 
-# ─── Lifespan ────────────────────────────────────────────────────────────────
-model_pipeline: Optional[Pipeline] = None
-
+model_pipeline = None
+model_classes  = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model_pipeline
-    log.info("GestureSense API starting up.")
-    # Build model in a thread so we don't block the event loop during HF download
-    loop = asyncio.get_event_loop()
-    model_pipeline = await loop.run_in_executor(None, _build_model)
+    global model_pipeline, model_classes
+    log.info("GestureSense starting up...")
+    model_pipeline = await asyncio.get_event_loop().run_in_executor(None, _train_model)
+    model_classes  = model_pipeline.classes_
     yield
     hands_static.close()
     hands_video.close()
-    log.info("MediaPipe handles closed.")
+    log.info("Shut down.")
 
 
-# ─── App ─────────────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="GestureSense API",
-    version="2.1.0",
-    description=(
-        "Sign language gesture detection — static images, uploads, and real-time WebSocket streaming. "
-        "Trained on the public-domain Sign Language MNIST dataset via Hugging Face."
-    ),
-    lifespan=lifespan,
-)
+app = FastAPI(title="GestureSense API", version="2.1.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+FAVICON_PATH = Path(__file__).resolve().parent / "public" / "favicon.ico"
 
-# ─── Schemas ─────────────────────────────────────────────────────────────────
+
 class Base64Request(BaseModel):
-    image: str  # raw base64, no data-URI prefix required
-
+    image: str
 
 class DetectionResult(BaseModel):
     sign: str
@@ -305,224 +231,151 @@ class DetectionResult(BaseModel):
     detected: bool
     processing_ms: float
 
-
 class DetectionResponse(BaseModel):
     success: bool
     result: Optional[DetectionResult] = None
     message: Optional[str] = None
 
 
-# ─── Classification Helpers ───────────────────────────────────────────────────
-def _classify(landmarks: np.ndarray, t0: float) -> DetectionResult:
-    proba = model_pipeline.predict_proba(landmarks)[0]
-    idx = int(np.argmax(proba))
-    conf = float(proba[idx])
-    return DetectionResult(
-        sign=SIGN_LABELS.get(idx, "Unknown"),
-        confidence=round(conf * 100, 2),
-        detected=conf >= CONFIDENCE_THRESHOLD,
-        processing_ms=round((time.perf_counter() - t0) * 1000, 2),
-    )
+def _classify(lm: np.ndarray, t0: float) -> DetectionResult:
+    proba    = model_pipeline.predict_proba(lm)[0]
+    best_pos = int(np.argmax(proba))
+    conf     = float(proba[best_pos])
+    sign     = _LABEL_TO_LETTER.get(int(model_classes[best_pos]), "?")
+    return DetectionResult(sign=sign, confidence=round(conf*100, 2),
+                           detected=conf >= CONF_THRESHOLD,
+                           processing_ms=round((time.perf_counter()-t0)*1000, 2))
 
-
-def _run_detection(bgr: np.ndarray, static: bool = True) -> DetectionResponse:
+def _detect(bgr: np.ndarray, static: bool = True) -> DetectionResponse:
     t0 = time.perf_counter()
-    landmarks = _extract_landmarks(bgr, static=static)
-    if landmarks is None:
-        return DetectionResponse(success=False, message="No hand detected in image.")
-    result = _classify(landmarks, t0)
-    return DetectionResponse(success=True, result=result)
+    lm = _landmarks_from_bgr(bgr, static)
+    if lm is None:
+        return DetectionResponse(success=False, message="No hand detected.")
+    return DetectionResponse(success=True, result=_classify(lm, t0))
+
+def _check_ready():
+    if model_pipeline is None:
+        raise HTTPException(503, "Model still loading — retry in a few seconds.")
 
 
-# ─── Routes ──────────────────────────────────────────────────────────────────
-
-@app.get("/", response_class=JSONResponse, include_in_schema=False)
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def root():
-    return {
-        "app": "GestureSense API",
-        "version": "2.1.0",
-        "endpoints": {
-            "health": "/health",
-            "signs": "/signs",
-            "dataset_info": "/dataset",
-            "detect": "/detect",
-            "detect_upload": "/detect/upload",
-            "detect_realtime": "/detect/realtime",
-            "websocket": "/ws/stream",
-        },
-    }
-
+    try:
+        return open("static/index.html").read()
+    except FileNotFoundError:
+        return HTMLResponse("<h2>GestureSense API running. See <a href='/docs'>/docs</a></h2>")
 
 @app.get("/health")
 async def health():
-    ready = model_pipeline is not None
-    return {
-        "status": "healthy" if ready else "loading",
-        "model_ready": ready,
-        "dataset": _dataset_meta.get("source", "unknown"),
-    }
+    return {"status": "healthy" if model_pipeline else "loading",
+            "model_ready": model_pipeline is not None,
+            "dataset": _dataset_source,
+            "samples_trained": _dataset_samples,
+            "classes": NUM_CLASSES}
 
 
-@app.get("/dataset")
-async def dataset_info():
-    """Return metadata about the training dataset and class distribution."""
-    return {
-        "dataset": _dataset_meta,
-        "notes": (
-            "Trained on ASL hand-shape images from Sign Language MNIST (Hugging Face). "
-            "MediaPipe extracts 21-landmark vectors at startup; the RandomForest is then "
-            "fitted on those real vectors. No local dataset file is required."
-        ),
-    }
-
+@app.get("/favicon")
+@app.get("/favicon.ico")
+async def favicon():
+    if not FAVICON_PATH.exists():
+        raise HTTPException(status_code=404, detail="Favicon not found")
+    return FileResponse(str(FAVICON_PATH), media_type="image/x-icon")
 
 @app.get("/signs")
-async def list_signs():
-    """Return supported sign labels."""
-    return {"signs": list(SIGN_LABELS.values()), "count": NUM_CLASSES}
+async def signs():
+    return {"signs": list(_LABEL_TO_LETTER.values()), "count": NUM_CLASSES,
+            "note": "ASL A-Y excluding J and Z (motion signs)"}
 
-
-# ── 1. Base64 JSON ────────────────────────────────────────────────────────────
 @app.post("/detect", response_model=DetectionResponse)
 async def detect_base64(body: Base64Request):
-    """
-    Detect gesture from a base64-encoded image.
-    Accepts raw base64 or full data-URI (data:image/...;base64,...).
-    """
-    if model_pipeline is None:
-        raise HTTPException(status_code=503, detail="Model is still loading. Try again in a few seconds.")
+    """POST {"image": "<base64>"} — raw base64 or data-URI."""
+    _check_ready()
     try:
-        bgr = _base64_to_bgr(body.image)
+        bgr = _b64_to_bgr(body.image)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image data: {e}")
-    return _run_detection(bgr, static=True)
+        raise HTTPException(400, f"Bad image: {e}")
+    return _detect(bgr, static=True)
 
-
-# ── 2. File Upload ────────────────────────────────────────────────────────────
 @app.post("/detect/upload", response_model=DetectionResponse)
 async def detect_upload(file: UploadFile = File(...)):
-    """
-    Detect gesture from a multipart file upload (JPEG, PNG, WEBP, etc.).
-    """
-    if model_pipeline is None:
-        raise HTTPException(status_code=503, detail="Model is still loading.")
+    """Multipart file upload — JPEG, PNG, WEBP, etc."""
+    _check_ready()
     if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=415, detail="File must be an image.")
+        raise HTTPException(415, "File must be an image.")
     raw = await file.read()
     if len(raw) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Image too large (max 10 MB).")
+        raise HTTPException(413, "Max 10 MB.")
     try:
         bgr = _bytes_to_bgr(raw)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not decode image: {e}")
-    return _run_detection(bgr, static=True)
+        raise HTTPException(400, f"Cannot decode: {e}")
+    return _detect(bgr, static=True)
 
-
-# ── 3. Realtime single-frame (low-latency polling) ───────────────────────────
 @app.post("/detect/realtime")
 async def detect_realtime(body: Base64Request):
-    """
-    Optimised endpoint for continuous frame polling.
-    Uses the video-mode MediaPipe detector (tracking enabled, faster).
-    """
+    """Low-latency polling endpoint for webcam frames."""
     if model_pipeline is None:
         return JSONResponse({"detected": False, "sign": None, "confidence": 0, "error": "model loading"})
     try:
-        bgr = _base64_to_bgr(body.image)
+        bgr = _b64_to_bgr(body.image)
     except Exception:
         return JSONResponse({"detected": False, "sign": None, "confidence": 0})
-
     t0 = time.perf_counter()
-    landmarks = _extract_landmarks(bgr, static=False)
-    if landmarks is None:
-        return JSONResponse({
-            "detected": False, "sign": None, "confidence": 0,
-            "processing_ms": round((time.perf_counter() - t0) * 1000, 2),
-        })
+    lm = _landmarks_from_bgr(bgr, static=False)
+    ms = round((time.perf_counter()-t0)*1000, 2)
+    if lm is None:
+        return JSONResponse({"detected": False, "sign": None, "confidence": 0, "processing_ms": ms})
+    r = _classify(lm, t0)
+    return JSONResponse({"detected": r.detected, "sign": r.sign if r.detected else None,
+                         "confidence": r.confidence, "processing_ms": r.processing_ms})
 
-    r = _classify(landmarks, t0)
-    return JSONResponse({
-        "detected": r.detected,
-        "sign": r.sign if r.detected else None,
-        "confidence": r.confidence,
-        "processing_ms": r.processing_ms,
-    })
-
-
-# ── 4. WebSocket streaming ────────────────────────────────────────────────────
-class ConnectionManager:
-    def __init__(self):
-        self.active: list[WebSocket] = []
-
-    async def connect(self, ws: WebSocket):
-        await ws.accept()
-        self.active.append(ws)
-        log.info(f"WS connected. Total: {len(self.active)}")
-
-    def disconnect(self, ws: WebSocket):
-        if ws in self.active:
-            self.active.remove(ws)
-        log.info(f"WS disconnected. Total: {len(self.active)}")
-
-
-manager = ConnectionManager()
-
+_ws_clients: list = []
 
 @app.websocket("/ws/stream")
-async def websocket_stream(ws: WebSocket):
+async def ws_stream(ws: WebSocket):
     """
-    WebSocket endpoint for real-time camera streaming.
-
-    Client sends: JSON string  {"frame": "<base64>"}
-    Server sends: JSON string  {"detected": bool, "sign": str|null,
-                                "confidence": float, "processing_ms": float}
+    Client sends:  {"frame": "<base64 jpeg>"}
+    Server sends:  {"detected": bool, "sign": str|null, "confidence": float, "processing_ms": float}
     """
-    await manager.connect(ws)
+    await ws.accept()
+    _ws_clients.append(ws)
+    log.info("WS connected. Active: %d", len(_ws_clients))
     try:
         while True:
             try:
                 data = await asyncio.wait_for(ws.receive_json(), timeout=10.0)
             except asyncio.TimeoutError:
-                await ws.send_json({"error": "timeout — send a frame within 10s"})
+                await ws.send_json({"error": "timeout"})
                 continue
-
             if model_pipeline is None:
-                await ws.send_json({"error": "model still loading"})
+                await ws.send_json({"error": "model loading"})
                 continue
-
             b64 = data.get("frame") or data.get("image")
             if not b64:
                 await ws.send_json({"error": "missing 'frame' key"})
                 continue
-
             t0 = time.perf_counter()
             try:
-                bgr = _base64_to_bgr(b64)
+                bgr = _b64_to_bgr(b64)
             except Exception as e:
                 await ws.send_json({"error": f"bad frame: {e}"})
                 continue
-
-            landmarks = _extract_landmarks(bgr, static=False)
-            if landmarks is None:
-                await ws.send_json({
-                    "detected": False, "sign": None, "confidence": 0,
-                    "processing_ms": round((time.perf_counter() - t0) * 1000, 2),
-                })
+            lm = _landmarks_from_bgr(bgr, static=False)
+            ms = round((time.perf_counter()-t0)*1000, 2)
+            if lm is None:
+                await ws.send_json({"detected": False, "sign": None, "confidence": 0, "processing_ms": ms})
                 continue
-
-            r = _classify(landmarks, t0)
-            await ws.send_json({
-                "detected": r.detected,
-                "sign": r.sign if r.detected else None,
-                "confidence": r.confidence,
-                "processing_ms": r.processing_ms,
-            })
-
+            r = _classify(lm, t0)
+            await ws.send_json({"detected": r.detected, "sign": r.sign if r.detected else None,
+                                "confidence": r.confidence, "processing_ms": r.processing_ms})
     except WebSocketDisconnect:
-        manager.disconnect(ws)
+        pass
     except Exception as e:
-        log.error(f"WS error: {e}")
-        manager.disconnect(ws)
+        log.error("WS error: %s", e)
+    finally:
+        if ws in _ws_clients:
+            _ws_clients.remove(ws)
+        log.info("WS disconnected. Active: %d", len(_ws_clients))
 
 
 if __name__ == "__main__":

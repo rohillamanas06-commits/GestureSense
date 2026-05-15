@@ -2,18 +2,18 @@
 
 GestureSense is a cutting-edge web application that leverages advanced AI technology to analyze and detect sign language gestures. Built with React, TypeScript, and FastAPI, GestureSense helps users translate hand signs in real-time using their webcam or uploaded images.
 
-### ✨ Key Features
+### Key Features
 
-- **🤖 AI-Powered Detection**: Utilizes MediaPipe for hand landmark detection and Scikit-Learn for accurate gesture classification.
-- **🎯 Real-time Streaming**: Instant analysis of gestures through high-performance WebSocket streaming.
-- **📊 Dataset Driven**: Dynamically trained on the public-domain Sign Language MNIST dataset via Hugging Face.
-- **🎨 Modern UI**: Beautiful, responsive interface built with Tailwind CSS v4 and shadcn/ui.
-- **⚡ Fast Routing**: Utilizes TanStack Router for lightning-fast, type-safe client-side routing.
-- **📱 Mobile Responsive**: Optimized for seamless experience across all device sizes.
+- ** AI-Powered Detection**: Utilizes MediaPipe for hand landmark detection and Scikit-Learn for accurate gesture classification.
+- ** Real-time Streaming**: Instant analysis of gestures through high-performance WebSocket streaming.
+- ** Dataset Driven**: Dynamically trained on the public-domain Sign Language MNIST dataset via Hugging Face.
+- ** Modern UI**: Beautiful, responsive interface built with Tailwind CSS v4 and shadcn/ui.
+- ** Fast Routing**: Utilizes TanStack Router for lightning-fast, type-safe client-side routing.
+- ** Mobile Responsive**: Optimized for seamless experience across all device sizes.
 
 ---
 
-## 🚀 Tech Stack
+##  Tech Stack
 
 ### Frontend
 - **React 19** - Modern UI library
