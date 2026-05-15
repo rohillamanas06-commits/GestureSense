@@ -1,0 +1,15 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+websockets==12.0
+opencv-python-headless==4.9.0.80
+mediapipe==0.10.11
+scikit-learn==1.4.2
+pillow==10.3.0
+numpy==1.26.4
+pydantic==2.7.1
+
+# ── Online dataset (no local files needed) ───────────────────────────────────
+# Downloads Sign Language MNIST from Hugging Face on first startup (~30s).
+# Dataset is cached in ~/.cache/huggingface/datasets after first run.
+datasets==2.19.1      # Hugging Face datasets library
