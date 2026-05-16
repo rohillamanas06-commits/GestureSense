@@ -9,11 +9,16 @@ type LogEntry = { id: number; sign: string; confidence: number; ts: string; sour
 type HealthStatus = { status: string; model_ready: boolean; dataset: string; samples_trained: number; classes: number; csv_present: boolean; cache_present: boolean; using_synthetic?: boolean; warning?: string };
 type VisionProvider = "auto" | "groq" | "gemini";
 
-const DEFAULT_API = "http://localhost:8000";
+const DEFAULT_API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 function useApi() {
   const [api, setApi] = useState(DEFAULT_API);
-  useEffect(() => { const v = localStorage.getItem("gs_api"); if (v) setApi(v); }, []);
+  useEffect(() => {
+    const v = localStorage.getItem("gs_api");
+    if (v) {
+      setApi(v);
+    }
+  }, []);
   return [api, (v: string) => { setApi(v); localStorage.setItem("gs_api", v); }] as const;
 }
 
