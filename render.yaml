@@ -3,9 +3,5 @@ services:
     name: gesturesense-backend
     env: python
     plan: free
-    pythonVersion: 3.11
     buildCommand: pip install -r requirements.txt
     startCommand: python run.py
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11
