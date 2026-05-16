@@ -9,6 +9,7 @@ export const Route = createFileRoute("/")({ component: Index });
 
 type DetectResult = { detected: boolean; sign: string | null; confidence: number; processing_ms?: number };
 type LogEntry = { id: number; sign: string; confidence: number; ts: string; source: "live" | "upload" };
+type HealthStatus = { status: string; model_ready: boolean; dataset: string; samples_trained: number; classes: number; csv_present: boolean; cache_present: boolean; using_synthetic?: boolean; warning?: string };
 
 const DEFAULT_API = "http://localhost:8000";
 
@@ -20,21 +21,27 @@ function useApi() {
 
 function useHealth(api: string, refreshKey: number) {
   const [s, setS] = useState<"loading" | "online" | "offline">("loading");
+  const [health, setHealth] = useState<HealthStatus | null>(null);
   useEffect(() => {
     let alive = true;
     setS("loading");
     fetch(`${api}/health`).then(r => r.json())
-      .then(d => alive && setS(d.model_ready ? "online" : "loading"))
+      .then(d => {
+        if (alive) {
+          setHealth(d);
+          setS(d.model_ready ? "online" : "loading");
+        }
+      })
       .catch(() => alive && setS("offline"));
     return () => { alive = false; };
   }, [api, refreshKey]);
-  return s;
+  return [s, health] as const;
 }
 
 // ─── HEADER ──────────────────────────────────────────────────────────────────
-function Header({ api, setApi, status, onRefresh }: {
+function Header({ api, setApi, status, health, onRefresh }: {
   api: string; setApi: (v: string) => void;
-  status: "loading" | "online" | "offline"; onRefresh: () => void;
+  status: "loading" | "online" | "offline"; health: HealthStatus | null; onRefresh: () => void;
 }) {
   const dot = status === "online" ? "bg-cyan" : status === "offline" ? "bg-destructive" : "bg-amber";
   const label = status === "online" ? "ONLINE" : status === "offline" ? "OFFLINE" : "BOOTING";
@@ -104,17 +111,30 @@ function TitleBar({ signCount }: { signCount: number }) {
 }
 
 // ─── ALERT BAR ───────────────────────────────────────────────────────────────
-function AlertBar({ status }: { status: "loading" | "online" | "offline" }) {
-  if (status !== "offline") return null;
-  return (
-    <div className="max-w-[1400px] mx-auto px-6 mb-6">
-      <div className="flex items-center justify-between gap-4 border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-xs uppercase tracking-[0.1em]">
-        <span className="text-destructive">
-          ▲ Backend unreachable.
-        </span>
+function AlertBar({ status, health }: { status: "loading" | "online" | "offline"; health: HealthStatus | null }) {
+  if (status === "offline") {
+    return (
+      <div className="max-w-[1400px] mx-auto px-6 mb-6">
+        <div className="flex items-center justify-between gap-4 border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-xs uppercase tracking-[0.1em]">
+          <span className="text-destructive">
+            ▲ Backend unreachable.
+          </span>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
+  if (health?.using_synthetic) {
+    return (
+      <div className="max-w-[1400px] mx-auto px-6 mb-6">
+        <div className="flex items-center justify-between gap-4 border border-amber/40 bg-amber/10 px-4 py-2.5 text-xs uppercase tracking-[0.1em]">
+          <span className="text-amber">
+            ⚠ SYNTHETIC DATA MODE — Predictions may not be accurate. Ensure CSV is in the app folder for real gestures.
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return null;
 }
 
 // ─── LIVE PANEL ──────────────────────────────────────────────────────────────
@@ -404,7 +424,7 @@ function LogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
 function Index() {
   const [api, setApi] = useApi();
   const [refreshKey, setRefreshKey] = useState(0);
-  const status = useHealth(api, refreshKey);
+  const [status, health] = useHealth(api, refreshKey);
   const [log, setLog] = useState<LogEntry[]>([]);
 
   const addLog = (e: Omit<LogEntry, "id" | "ts">) => {
@@ -417,8 +437,8 @@ function Index() {
 
   return (
     <div className="min-h-screen">
-      <Header api={api} setApi={setApi} status={status} onRefresh={() => setRefreshKey(k => k + 1)} />
-      <AlertBar status={status} />
+      <Header api={api} setApi={setApi} status={status} health={health} onRefresh={() => setRefreshKey(k => k + 1)} />
+      <AlertBar status={status} health={health} />
 
       <main className="max-w-[1400px] mx-auto px-6 pb-10">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -430,9 +450,16 @@ function Index() {
         </div>
       </main>
 
-      <footer className="max-w-[1400px] mx-auto px-6 py-6 mt-6 border-t border-border flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+      <footer className="max-w-[1400px] mx-auto px-6 py-6 mt-6 border-t border-border flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-muted-foreground flex-wrap gap-4">
         <span>► GestureSense Console</span>
-        <a href="/about" className="hover:text-cyan transition-colors">About</a>
+        <div className="flex gap-4">
+          <a href="/about" className="hover:text-cyan transition-colors">About</a>
+          <a href="/privacy" className="hover:text-cyan transition-colors">Privacy</a>
+          <a href="/terms" className="hover:text-cyan transition-colors">Terms</a>
+          <a href="/cookie" className="hover:text-cyan transition-colors">Cookie</a>
+          <a href="/license" className="hover:text-cyan transition-colors">License</a>
+          <a href="/faq" className="hover:text-cyan transition-colors">FAQ</a>
+        </div>
       </footer>
     </div>
   );

@@ -70,3 +70,6 @@ Thumbs.db
 *.sln
 *.sw?
 .tanstack/
+
+sign_mnist_test.csv
+sign_mnist_train.csv
