@@ -4,7 +4,8 @@ GestureSense is a modern sign-language detection app with a sleek TanStack Start
 
 ##  Screenshots
 
-Add screenshots here if you want to showcase the UI.
+![GestureSense screenshot](public/Screenshot%202026-05-16%20145005.png)
+
 
 ##  Features
 
