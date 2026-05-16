@@ -2,16 +2,16 @@ export default function Cookie() {
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-background/90 backdrop-blur sticky top-0 z-30">
-        <div className="max-w-[1400px] mx-auto px-6 h-16 flex items-center justify-between gap-4">
+        <div className="max-w-[1400px] mx-auto px-4 md:px-6 min-h-16 py-2 md:py-0 flex flex-wrap items-center justify-between gap-3 md:gap-4">
           <div className="flex items-center gap-3">
             <div className="size-9 border border-cyan-soft bg-cyan-soft flex items-center justify-center text-cyan text-xs">
               <span className="font-bold">[ ]</span>
             </div>
             <div className="leading-tight">
-              <div className="text-sm font-semibold tracking-wider">
+              <div className="text-xs sm:text-sm font-semibold tracking-wider">
                 <span className="text-cyan">GESTURE</span><span>SENSE</span>
               </div>
-              <div className="text-[10px] text-muted-foreground tracking-[0.18em] uppercase mt-0.5">
+              <div className="text-[9px] sm:text-[10px] text-muted-foreground tracking-[0.14em] sm:tracking-[0.18em] uppercase mt-0.5">
                 Cookie Policy
               </div>
             </div>
@@ -19,17 +19,17 @@ export default function Cookie() {
 
           <a
             href="/"
-            className="text-muted-foreground hover:text-cyan transition-colors text-xs uppercase tracking-widest"
+            className="text-muted-foreground hover:text-cyan transition-colors text-[10px] sm:text-xs uppercase tracking-[0.14em] sm:tracking-widest"
           >
             Back to Console
           </a>
         </div>
       </header>
 
-      <main className="max-w-[1000px] mx-auto px-6 py-12">
+      <main className="max-w-[1000px] mx-auto px-4 md:px-6 py-8 md:py-12">
         <div className="space-y-6">
           <section>
-            <h1 className="text-3xl md:text-4xl font-bold tracking-[0.05em] mb-4">Cookie Policy</h1>
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-[0.04em] md:tracking-[0.05em] mb-4">Cookie Policy</h1>
             <p className="text-muted-foreground leading-relaxed">
               GestureSense uses cookies to enhance your experience and provide essential functionality. This policy explains what cookies are, how we use them, and your options regarding their use.
             </p>

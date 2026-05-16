@@ -70,22 +70,22 @@ function Header({ api, setApi, status, health, onRefresh }: {
 
   return (
     <header className="border-b border-border bg-background/90 backdrop-blur sticky top-0 z-30">
-      <div className="max-w-[1400px] mx-auto px-6 h-16 flex items-center justify-between gap-4">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-6 min-h-16 py-2 md:py-0 flex flex-wrap items-center justify-between gap-3 md:gap-4">
         <div className="flex items-center gap-3">
           <div className="size-9 border border-cyan-soft bg-cyan-soft flex items-center justify-center text-cyan text-xs">
             <span className="font-bold">[ ]</span>
           </div>
           <div className="leading-tight">
-            <div className="text-sm font-semibold tracking-wider">
+            <div className="text-xs sm:text-sm font-semibold tracking-wider">
               <span className="text-cyan">GESTURE</span><span>SENSE</span>
             </div>
-            <div className="text-[10px] text-muted-foreground tracking-[0.18em] uppercase mt-0.5">
+            <div className="text-[9px] sm:text-[10px] text-muted-foreground tracking-[0.14em] sm:tracking-[0.18em] uppercase mt-0.5">
               Sign Language Detection Console
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
           <a
             href="https://github.com/rohillamanas06-commits/GestureSense"
             target="_blank"
@@ -136,7 +136,7 @@ function TitleBar({ signCount }: { signCount: number }) {
 function AlertBar({ status, health }: { status: "loading" | "online" | "offline"; health: HealthStatus | null }) {
   if (status === "offline") {
     return (
-      <div className="max-w-[1400px] mx-auto px-6 mb-6">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-6 mb-4 md:mb-6">
         <div className="flex items-center justify-between gap-4 border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-xs uppercase tracking-[0.1em]">
           <span className="text-destructive">
             ▲ Backend unreachable.
@@ -147,7 +147,7 @@ function AlertBar({ status, health }: { status: "loading" | "online" | "offline"
   }
   if (health?.using_synthetic) {
     return (
-      <div className="max-w-[1400px] mx-auto px-6 mb-6">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-6 mb-4 md:mb-6">
         <div className="flex items-center justify-between gap-4 border border-amber/40 bg-amber/10 px-4 py-2.5 text-xs uppercase tracking-[0.1em]">
           <span className="text-amber">
             ⚠ SYNTHETIC DATA MODE — Predictions may not be accurate. Ensure CSV is in the app folder for real gestures.
@@ -268,9 +268,9 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
 
   return (
     <div className="panel flex flex-col">
-      <div className="panel-header">
+      <div className="panel-header gap-2 flex-wrap">
         <span className="flex items-center gap-2"><Camera className="size-3.5" /> Live Detection</span>
-        <span className="flex items-center gap-3 normal-case tracking-normal">
+        <span className="w-full sm:w-auto flex items-center flex-wrap justify-start sm:justify-end gap-2 normal-case tracking-normal">
           <span className="text-[10px] text-muted-foreground tracking-widest">LATENCY: <span className="text-cyan">{latency.toFixed(0)}MS</span></span>
           <select
             value={provider}
@@ -315,11 +315,11 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
 
       <div className="p-3 border-t border-border flex items-center gap-2">
         {!streaming ? (
-          <button onClick={start} className="flex-1 flex items-center justify-center gap-2 bg-cyan-soft border border-cyan-soft text-cyan text-xs uppercase tracking-[0.18em] py-2 hover:bg-cyan hover:text-primary-foreground transition-colors">
+          <button onClick={start} className="flex-1 flex items-center justify-center gap-2 bg-cyan-soft border border-cyan-soft text-cyan text-[10px] sm:text-xs uppercase tracking-[0.14em] sm:tracking-[0.18em] py-2 hover:bg-cyan hover:text-primary-foreground transition-colors">
             <Camera className="size-3.5" /> Initialize Stream
           </button>
         ) : (
-          <button onClick={stop} className="flex-1 flex items-center justify-center gap-2 border border-destructive/50 text-destructive text-xs uppercase tracking-[0.18em] py-2 hover:bg-destructive/10 transition-colors">
+          <button onClick={stop} className="flex-1 flex items-center justify-center gap-2 border border-destructive/50 text-destructive text-[10px] sm:text-xs uppercase tracking-[0.14em] sm:tracking-[0.18em] py-2 hover:bg-destructive/10 transition-colors">
             <Square className="size-3.5" /> Halt Stream
           </button>
         )}
@@ -363,9 +363,9 @@ function UploadPanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "i
 
   return (
     <div className="panel flex flex-col">
-      <div className="panel-header">
+      <div className="panel-header gap-2 flex-wrap">
         <span className="flex items-center gap-2"><ImageIcon className="size-3.5" /> Image Upload</span>
-        <div className="flex items-center gap-2">
+        <div className="w-full sm:w-auto flex items-center justify-start sm:justify-end gap-2">
           <span className="text-[10px] text-muted-foreground tracking-widest normal-case">SINGLE FRAME</span>
           <select
             value={provider}
@@ -431,17 +431,17 @@ function UploadPanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "i
           </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <button
             onClick={() => inputRef.current?.click()}
-            className="flex-1 flex items-center justify-center gap-2 bg-cyan-soft border border-cyan-soft text-cyan text-xs uppercase tracking-[0.18em] py-2 hover:bg-cyan hover:text-primary-foreground transition-colors"
+            className="flex-1 flex items-center justify-center gap-2 bg-cyan-soft border border-cyan-soft text-cyan text-[10px] sm:text-xs uppercase tracking-[0.14em] sm:tracking-[0.18em] py-2 hover:bg-cyan hover:text-primary-foreground transition-colors"
           >
             <Upload className="size-3.5" /> Choose Image
           </button>
           {preview && (
             <button
               onClick={() => { setPreview(null); setResult(null); setMsg(null); }}
-              className="flex-1 flex items-center justify-center gap-2 border border-destructive/50 text-destructive text-xs uppercase tracking-[0.18em] py-2 hover:bg-destructive/10 transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 border border-destructive/50 text-destructive text-[10px] sm:text-xs uppercase tracking-[0.14em] sm:tracking-[0.18em] py-2 hover:bg-destructive/10 transition-colors"
               title="Remove image"
             >
               ✕ Remove
@@ -478,12 +478,12 @@ function LogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
         ) : (
           <ul className="divide-y divide-border">
             {entries.map(e => (
-              <li key={e.id} className="px-3 py-2 flex items-center gap-3 text-xs hover:bg-cyan-soft transition-colors">
-                <span className="text-[10px] text-muted-foreground tabular-nums w-14">{e.ts}</span>
+              <li key={e.id} className="px-3 py-2 flex items-center gap-2 sm:gap-3 text-xs hover:bg-cyan-soft transition-colors">
+                <span className="text-[10px] text-muted-foreground tabular-nums w-12 sm:w-14">{e.ts}</span>
                 <span className={`size-1.5 rounded-full ${e.source === "live" ? "bg-cyan" : "bg-amber"}`} />
                 <span className="flex-1 text-foreground">{e.sign}</span>
                 <span className="text-cyan tabular-nums">{e.confidence.toFixed(1)}%</span>
-                <span className="text-[9px] text-muted-foreground uppercase tracking-widest w-12 text-right">{e.source}</span>
+                <span className="text-[9px] text-muted-foreground uppercase tracking-widest w-10 sm:w-12 text-right">{e.source}</span>
               </li>
             ))}
           </ul>
@@ -515,7 +515,7 @@ export default function Index() {
       <Header api={api} setApi={setApi} status={status} health={health} onRefresh={() => setRefreshKey(k => k + 1)} />
       <AlertBar status={status} health={health} />
 
-      <main className="max-w-[1400px] mx-auto px-6 pb-10">
+      <main className="max-w-[1400px] mx-auto px-4 md:px-6 pb-8 md:pb-10">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <LivePanel api={api} onLog={addLog} />
           <UploadPanel api={api} onLog={addLog} />
@@ -525,9 +525,9 @@ export default function Index() {
         </div>
       </main>
 
-      <footer className="max-w-[1400px] mx-auto px-6 py-6 mt-6 border-t border-border flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-muted-foreground flex-wrap gap-4">
+      <footer className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 mt-6 border-t border-border flex items-center justify-between text-[9px] sm:text-[10px] uppercase tracking-[0.12em] sm:tracking-[0.18em] text-muted-foreground flex-wrap gap-4">
         <span>► GestureSense Console</span>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-x-4 gap-y-2 justify-end">
           <a href="/about" className="hover:text-cyan transition-colors">About</a>
           <a href="/privacy" className="hover:text-cyan transition-colors">Privacy</a>
           <a href="/terms" className="hover:text-cyan transition-colors">Terms</a>
