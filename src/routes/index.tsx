@@ -306,7 +306,7 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
           </div>
         )}
         {streaming && result?.detected && result.sign && (
-          <div className="absolute top-3 left-3 px-2 py-1 bg-background/80 border border-cyan-soft text-cyan text-xs tracking-widest">
+          <div className="absolute top-5 sm:top-3 left-3 px-2 py-1 bg-background/80 border border-cyan-soft text-cyan text-xs tracking-widest">
             ► {result.sign.toUpperCase()} · {result.confidence.toFixed(0)}%
           </div>
         )}
