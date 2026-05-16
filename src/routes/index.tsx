@@ -143,6 +143,7 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const intervalRef = useRef<number | null>(null);
+  const inFlightRef = useRef(false);
   const lastSignRef = useRef<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [result, setResult] = useState<DetectResult | null>(null);
@@ -153,14 +154,40 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
   const stop = useCallback(() => {
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     wsRef.current?.close(); wsRef.current = null;
+    inFlightRef.current = false;
+    lastSignRef.current = null;
+    setResult(null);
+    setLatency(0);
     const s = videoRef.current?.srcObject as MediaStream | null;
     s?.getTracks().forEach(t => t.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
     setStreaming(false);
   }, []);
 
+  const sendFrame = useCallback((ws: WebSocket) => {
+    if (inFlightRef.current) return;
+    if (!videoRef.current || !canvasRef.current || ws.readyState !== WebSocket.OPEN) return;
+    if (videoRef.current.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+
+    const c = canvasRef.current;
+    const width = Math.max(videoRef.current.videoWidth || 0, 640);
+    const height = Math.max(videoRef.current.videoHeight || 0, 480);
+    c.width = width;
+    c.height = height;
+
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+
+    inFlightRef.current = true;
+    ctx.drawImage(videoRef.current, 0, 0, c.width, c.height);
+    ws.send(JSON.stringify({ frame: c.toDataURL("image/jpeg", 0.92) }));
+  }, []);
+
   const start = async () => {
     setError(null);
+    setResult(null);
+    setLatency(0);
+    lastSignRef.current = null;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       if (!videoRef.current) return;
@@ -173,6 +200,7 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
       ws.onmessage = ev => {
         try {
           const d = JSON.parse(ev.data);
+          inFlightRef.current = false;
           if (d.error) return;
           setResult(d);
           setLatency(d.processing_ms ?? 0);
@@ -183,15 +211,18 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
           if (!d.detected) lastSignRef.current = null;
         } catch {}
       };
-      ws.onerror = () => setError("WebSocket error.");
+      ws.onerror = () => {
+        inFlightRef.current = false;
+        setError("WebSocket error.");
+      };
+      ws.onclose = () => {
+        inFlightRef.current = false;
+      };
       ws.onopen = () => {
         intervalRef.current = window.setInterval(() => {
-          if (!videoRef.current || !canvasRef.current || ws.readyState !== WebSocket.OPEN) return;
-          const c = canvasRef.current; c.width = 320; c.height = 240;
-          const ctx = c.getContext("2d"); if (!ctx) return;
-          ctx.drawImage(videoRef.current, 0, 0, c.width, c.height);
-          ws.send(JSON.stringify({ frame: c.toDataURL("image/jpeg", 0.7) }));
+          sendFrame(ws);
         }, interval);
+        sendFrame(ws);
       };
     } catch (e: any) {
       setError(e?.message ?? "Camera permission denied.");
@@ -207,13 +238,9 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
     if (intervalRef.current) clearInterval(intervalRef.current);
     const ws = wsRef.current;
     intervalRef.current = window.setInterval(() => {
-      if (!videoRef.current || !canvasRef.current || ws.readyState !== WebSocket.OPEN) return;
-      const c = canvasRef.current; c.width = 320; c.height = 240;
-      const ctx = c.getContext("2d"); if (!ctx) return;
-      ctx.drawImage(videoRef.current, 0, 0, c.width, c.height);
-      ws.send(JSON.stringify({ frame: c.toDataURL("image/jpeg", 0.7) }));
+      sendFrame(ws);
     }, interval);
-  }, [interval, streaming]);
+  }, [interval, sendFrame, streaming]);
 
   return (
     <div className="panel flex flex-col">
