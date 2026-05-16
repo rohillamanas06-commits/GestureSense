@@ -39,9 +39,27 @@ GestureSense is a modern sign-language detection app with a sleek TanStack Start
 - **Environment Loading:** python-dotenv
 
 ### Deployment
-- **Frontend:** Vite/TanStack build output
-- **Backend:** Python FastAPI server
-- **Version Control:** Git & GitHub
+
+#### Backend (Render)
+1. Push code to GitHub
+2. Connect your repository to Render
+3. Select `render.yaml` as the configuration
+4. Set environment variables (GEMINI_API_KEY, GROQ_API_KEY, VISION_PROVIDER)
+5. Deploy — Render will automatically build and run the FastAPI server
+
+#### Frontend (Vercel)
+1. Push code to GitHub
+2. Import project in Vercel dashboard
+3. Set `VITE_API_URL` environment variable to your Render backend URL
+4. Deploy — Vercel will build and deploy the TanStack frontend
+
+#### Local Setup
+1. Clone the repository
+2. Install backend dependencies: `pip install -r requirements.txt`
+3. Install frontend dependencies: `npm install`
+4. Create `.env` file (see `.env.example`)
+5. Run backend: `python gesturesense.py`
+6. Run frontend: `npm run dev`
 
 ## 📂 Project Structure
 
