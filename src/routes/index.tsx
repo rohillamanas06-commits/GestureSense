@@ -515,7 +515,7 @@ export default function Index() {
       <Header api={api} setApi={setApi} status={status} health={health} onRefresh={() => setRefreshKey(k => k + 1)} />
       <AlertBar status={status} health={health} />
 
-      <main className="max-w-[1400px] mx-auto px-4 md:px-6 mt-4 md:mt-0 pb-8 md:pb-10">
+      <main className="max-w-[1400px] mx-auto px-4 md:px-6 mt-4 md:mt-8 pb-8 md:pb-10">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <LivePanel api={api} onLog={addLog} />
           <UploadPanel api={api} onLog={addLog} />
