@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from dotenv import load_dotenv
 import google.generativeai as genai
+import requests
 from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,17 +25,53 @@ load_dotenv()
 # Configure Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+VISION_PROVIDER = os.getenv("VISION_PROVIDER", "groq" if GROQ_API_KEY else "gemini").strip().lower()
 
-if GEMINI_API_KEY:
+
+def _resolve_vision_backend() -> dict[str, str | None]:
+    if VISION_PROVIDER == "groq" and GROQ_API_KEY:
+        return {"provider": "groq", "api_key": GROQ_API_KEY, "model": GROQ_MODEL}
+
+    if VISION_PROVIDER == "gemini" and GEMINI_API_KEY:
+        return {"provider": "gemini", "api_key": GEMINI_API_KEY, "model": GEMINI_MODEL}
+
+    if GROQ_API_KEY:
+        return {"provider": "groq", "api_key": GROQ_API_KEY, "model": GROQ_MODEL}
+
+    if GEMINI_API_KEY:
+        return {"provider": "gemini", "api_key": GEMINI_API_KEY, "model": GEMINI_MODEL}
+
+    return {"provider": None, "api_key": None, "model": GROQ_MODEL if VISION_PROVIDER == "groq" else GEMINI_MODEL}
+
+
+VISION_BACKEND = _resolve_vision_backend()
+
+
+def _resolve_runtime_backend(provider: str | None = None) -> dict[str, str | None]:
+    requested = (provider or "auto").strip().lower()
+
+    if requested == "groq":
+        return {"provider": "groq", "api_key": GROQ_API_KEY, "model": GROQ_MODEL}
+
+    if requested == "gemini":
+        return {"provider": "gemini", "api_key": GEMINI_API_KEY, "model": GEMINI_MODEL}
+
+    return VISION_BACKEND
+
+if VISION_BACKEND["provider"] == "gemini" and GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     logger.info(f"Gemini API configured with model: {GEMINI_MODEL}")
+elif VISION_BACKEND["provider"] == "groq" and GROQ_API_KEY:
+    logger.info(f"Groq API configured with model: {GROQ_MODEL}")
 else:
-    logger.warning("GEMINI_API_KEY or GOOGLE_API_KEY not set - detection will fail")
+    logger.warning("No vision API key configured - detection will fail")
 
 # Initialize FastAPI app
 app = FastAPI(
     title="GestureSense API",
-    description="Sign Language Detection using Gemini Vision",
+    description="Sign Language Detection using vision-capable LLMs",
     version="1.0.0"
 )
 
@@ -54,8 +91,9 @@ async def startup_event():
     """Called when the server starts."""
     logger.info("✅ GestureSense API Server started successfully")
     logger.info(f"📡 Backend running on 0.0.0.0:8000")
-    logger.info(f"🤖 Gemini Model: {GEMINI_MODEL}")
-    if GEMINI_API_KEY:
+    logger.info(f"🤖 Vision Provider: {VISION_BACKEND['provider'] or 'none'}")
+    logger.info(f"🤖 Vision Model: {VISION_BACKEND['model']}")
+    if VISION_BACKEND["api_key"]:
         logger.info("🔑 API Key: Configured")
     else:
         logger.warning("⚠️  API Key: Not configured - detection will fail")
@@ -139,10 +177,10 @@ def _parse_detection_text(response_text: str) -> dict:
     }
 
 
-def analyze_image(image_data: str, *, is_base64: bool = True) -> dict:
+def analyze_image(image_data: str, *, is_base64: bool = True, provider: str | None = None) -> dict:
     """Analyze an image and return the frontend-friendly detection payload."""
     started_at = time.perf_counter()
-    result = detect_sign_language(image_data, is_base64=is_base64)
+    result = detect_sign_language(image_data, is_base64=is_base64, provider=provider)
 
     if result.get("status") != "success":
         return {
@@ -155,9 +193,9 @@ def analyze_image(image_data: str, *, is_base64: bool = True) -> dict:
     return payload
 
 
-def detect_sign_language(image_data: str, is_base64: bool = True) -> dict:
+def detect_sign_language(image_data: str, is_base64: bool = True, provider: str | None = None) -> dict:
     """
-    Detect sign language from image using Gemini Vision.
+    Detect sign language from image using the configured vision provider.
     
     Args:
         image_data: Base64 encoded image or file path
@@ -167,22 +205,21 @@ def detect_sign_language(image_data: str, is_base64: bool = True) -> dict:
         Dictionary containing detected signs and confidence
     """
     try:
+        backend = _resolve_runtime_backend(provider)
+
         # Check if API key is configured
-        if not GEMINI_API_KEY:
+        if not backend["api_key"] or not backend["provider"]:
             return {
                 "status": "error",
-                "error": "GEMINI_API_KEY or GOOGLE_API_KEY not configured. Please add your API key to .env file.",
-                "model": GEMINI_MODEL
+                "error": "No vision API key configured. Please add GROQ_API_KEY or GEMINI_API_KEY to your .env file.",
+                "model": backend["model"]
             }
         
-        # Prepare image for Gemini
+        # Prepare image payload
         if is_base64:
             image_base64 = _strip_data_url_prefix(image_data)
         else:
             image_base64 = encode_image_to_base64(str(image_data))
-        
-        # Call Gemini Vision API
-        model = genai.GenerativeModel(GEMINI_MODEL)
         
         prompt = """Analyze this image for sign language gestures.
 
@@ -197,27 +234,86 @@ Return only valid JSON with this shape:
 If no clear sign is visible, set detected to false, sign to null, and confidence to 0.
 Do not include markdown fences or extra commentary.
 """
-        
-        message = model.generate_content([
-            {
-                "mime_type": "image/jpeg",
-                "data": image_base64,
-            },
-            prompt
-        ])
+
+        if backend["provider"] == "groq":
+            message_text = _detect_with_groq(image_base64, prompt)
+        elif backend["provider"] == "gemini":
+            message_text = _detect_with_gemini(image_base64, prompt)
+        else:
+            raise RuntimeError("No vision provider is configured.")
         
         return {
             "status": "success",
-            "detection": message.text,
-            "model": GEMINI_MODEL
+            "detection": message_text,
+            "model": backend["model"],
+            "provider": backend["provider"],
         }
     
     except Exception as e:
         return {
             "status": "error",
             "error": str(e),
-            "model": GEMINI_MODEL
+            "model": backend["model"],
         }
+
+
+def _detect_with_gemini(image_base64: str, prompt: str) -> str:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY is not configured.")
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    message = model.generate_content([
+        {
+            "mime_type": "image/jpeg",
+            "data": image_base64,
+        },
+        prompt,
+    ])
+    return getattr(message, "text", "") or ""
+
+
+def _detect_with_groq(image_base64: str, prompt: str) -> str:
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+                ],
+            }
+        ],
+        "temperature": 0,
+        "max_completion_tokens": 1024,
+        "top_p": 1,
+        "stream": False,
+    }
+
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=60,
+    )
+    response.raise_for_status()
+
+    data = response.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("Groq response did not include any choices.")
+
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("Groq response did not include message content.")
+
+    return content
 
 
 @app.get("/")
@@ -226,32 +322,35 @@ async def root():
     return {
         "status": "online",
         "service": "GestureSense Sign Language Detection",
-        "model": GEMINI_MODEL
+        "model": VISION_BACKEND["model"],
+        "provider": VISION_BACKEND["provider"],
     }
 
 
 @app.get("/health")
 async def health():
     """Health status endpoint."""
-    model_ready = bool(GEMINI_API_KEY)
+    model_ready = bool(VISION_BACKEND["api_key"])
+    provider = VISION_BACKEND["provider"] or "none"
     return {
         "status": "healthy",
         "service": "GestureSense",
-        "model": GEMINI_MODEL,
+        "model": VISION_BACKEND["model"],
+        "provider": provider,
         "model_ready": model_ready,
-        "dataset": "gemini-vision",
+        "dataset": f"{provider}-vision" if provider != "none" else "unconfigured",
         "samples_trained": 0,
         "classes": 0,
         "csv_present": False,
         "cache_present": False,
         "using_synthetic": not model_ready,
-        "warning": None if model_ready else "API key not configured; detection is unavailable.",
+        "warning": None if model_ready else "No vision API key configured; detection is unavailable.",
     }
 
 
 @app.post("/detect/upload")
 @app.post("/detect")
-async def detect_from_upload(file: UploadFile = File(...)):
+async def detect_from_upload(file: UploadFile = File(...), provider: str | None = None):
     """
     Detect sign language from uploaded image.
     
@@ -276,7 +375,7 @@ async def detect_from_upload(file: UploadFile = File(...)):
         contents = await file.read()
         image_base64 = base64.standard_b64encode(contents).decode("utf-8")
         
-        result = analyze_image(image_base64, is_base64=True)
+        result = analyze_image(image_base64, is_base64=True, provider=provider)
 
         if "error" in result:
             return JSONResponse(content={"success": False, "message": result["error"]}, status_code=500)
@@ -296,6 +395,7 @@ async def detect_from_upload(file: UploadFile = File(...)):
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     await websocket.accept()
+    provider = websocket.query_params.get("provider")
 
     try:
         while True:
@@ -312,7 +412,7 @@ async def websocket_stream(websocket: WebSocket):
                 await websocket.send_json({"error": "Missing frame data."})
                 continue
 
-            result = await asyncio.to_thread(analyze_image, frame, is_base64=True)
+            result = await asyncio.to_thread(analyze_image, frame, is_base64=True, provider=provider)
             await websocket.send_json(result)
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
@@ -394,7 +494,8 @@ async def batch_detect(payload: dict):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     logger.info(f"Starting GestureSense API on 0.0.0.0:{port}")
-    logger.info(f"Using Gemini Model: {GEMINI_MODEL}")
+    logger.info(f"Using Vision Provider: {VISION_BACKEND['provider'] or 'none'}")
+    logger.info(f"Using Vision Model: {VISION_BACKEND['model']}")
     logger.info(f"Available endpoints:")
     logger.info(f"  GET  http://0.0.0.0:{port}/")
     logger.info(f"  GET  http://0.0.0.0:{port}/health")

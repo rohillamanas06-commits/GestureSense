@@ -10,6 +10,7 @@ export const Route = createFileRoute("/")({ component: Index });
 type DetectResult = { detected: boolean; sign: string | null; confidence: number; processing_ms?: number };
 type LogEntry = { id: number; sign: string; confidence: number; ts: string; source: "live" | "upload" };
 type HealthStatus = { status: string; model_ready: boolean; dataset: string; samples_trained: number; classes: number; csv_present: boolean; cache_present: boolean; using_synthetic?: boolean; warning?: string };
+type VisionProvider = "auto" | "groq" | "gemini";
 
 const DEFAULT_API = "http://localhost:8000";
 
@@ -17,6 +18,25 @@ function useApi() {
   const [api, setApi] = useState(DEFAULT_API);
   useEffect(() => { const v = localStorage.getItem("gs_api"); if (v) setApi(v); }, []);
   return [api, (v: string) => { setApi(v); localStorage.setItem("gs_api", v); }] as const;
+}
+
+function useStoredProvider(storageKey: string) {
+  const [provider, setProvider] = useState<VisionProvider>("auto");
+  useEffect(() => {
+    const stored = localStorage.getItem(storageKey) as VisionProvider | null;
+    if (stored === "auto" || stored === "groq" || stored === "gemini") {
+      setProvider(stored);
+    }
+  }, []);
+  return [provider, (v: VisionProvider) => { setProvider(v); localStorage.setItem(storageKey, v); }] as const;
+}
+
+function useUploadProvider() {
+  return useStoredProvider("gs_upload_provider");
+}
+
+function useLiveProvider() {
+  return useStoredProvider("gs_live_provider");
 }
 
 function useHealth(api: string, refreshKey: number) {
@@ -150,6 +170,7 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
   const [latency, setLatency] = useState(0);
   const [interval, setIntervalMs] = useState(400);
   const [error, setError] = useState<string | null>(null);
+  const [provider, setProvider] = useLiveProvider();
 
   const stop = useCallback(() => {
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
@@ -195,7 +216,8 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
       await videoRef.current.play();
       setStreaming(true);
 
-      const ws = new WebSocket(api.replace(/^http/, "ws") + "/ws/stream");
+      const providerQuery = provider === "auto" ? "" : `?provider=${encodeURIComponent(provider)}`;
+      const ws = new WebSocket(api.replace(/^http/, "ws") + `/ws/stream${providerQuery}`);
       wsRef.current = ws;
       ws.onmessage = ev => {
         try {
@@ -248,6 +270,16 @@ function LivePanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "id"
         <span className="flex items-center gap-2"><Camera className="size-3.5" /> Live Detection</span>
         <span className="flex items-center gap-3 normal-case tracking-normal">
           <span className="text-[10px] text-muted-foreground tracking-widest">LATENCY: <span className="text-cyan">{latency.toFixed(0)}MS</span></span>
+          <select
+            value={provider}
+            onChange={e => setProvider(e.target.value as VisionProvider)}
+            className="bg-input border border-border text-[10px] px-1.5 py-0.5 text-cyan tracking-widest outline-none"
+            title="Choose vision model for live camera"
+          >
+            <option value="auto">AUTO</option>
+            <option value="groq">GROQ</option>
+            <option value="gemini">GEMINI</option>
+          </select>
           <select
             value={interval}
             onChange={e => setIntervalMs(Number(e.target.value))}
@@ -302,12 +334,14 @@ function UploadPanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "i
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [provider, setProvider] = useUploadProvider();
 
   const upload = async (file: File) => {
     setMsg(null); setResult(null); setPreview(URL.createObjectURL(file)); setLoading(true);
     try {
       const fd = new FormData(); fd.append("file", file);
-      const r = await fetch(`${api}/detect/upload`, { method: "POST", body: fd });
+      const providerQuery = provider === "auto" ? "" : `?provider=${encodeURIComponent(provider)}`;
+      const r = await fetch(`${api}/detect/upload${providerQuery}`, { method: "POST", body: fd });
       const data = await r.json();
       if (data.success && data.result) {
         setResult(data.result);
@@ -329,7 +363,19 @@ function UploadPanel({ api, onLog }: { api: string; onLog: (e: Omit<LogEntry, "i
     <div className="panel flex flex-col">
       <div className="panel-header">
         <span className="flex items-center gap-2"><ImageIcon className="size-3.5" /> Image Upload</span>
-        <span className="text-[10px] text-muted-foreground tracking-widest normal-case">SINGLE FRAME</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground tracking-widest normal-case">SINGLE FRAME</span>
+          <select
+            value={provider}
+            onChange={e => setProvider(e.target.value as VisionProvider)}
+            className="bg-input border border-border text-[10px] px-1.5 py-0.5 text-cyan tracking-widest outline-none"
+            title="Choose vision model for image upload"
+          >
+            <option value="auto">AUTO</option>
+            <option value="groq">GROQ</option>
+            <option value="gemini">GEMINI</option>
+          </select>
+        </div>
       </div>
 
       <div className="p-3 flex-1 flex flex-col gap-3">

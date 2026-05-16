@@ -1,16 +1,19 @@
 #  GestureSense - Sign Language Detection Console
 
-GestureSense is a modern sign-language detection app with a sleek TanStack Start frontend and a FastAPI backend powered by Gemini Vision. It supports live webcam detection, single-image uploads, and a real-time detection log for quick feedback.
+GestureSense is a modern sign-language detection app with a sleek TanStack Start frontend and a FastAPI backend powered by a configurable vision model. It supports live webcam detection, single-image uploads, and a real-time detection log for quick feedback.
 
 ##  Screenshots
 
 ![GestureSense screenshot](public/Screenshot%202026-05-16%20145005.png)
+![GestureSense screenshot](public/Screenshot%202026-05-16%20161019.png)
+![GestureSense screenshot](public/about.png)
+
 
 
 ##  Features
 
 - 🎨 **Modern Console UI** - Clean, futuristic interface with real-time status indicators
-- 🤖 **AI Gesture Detection** - Gemini Vision-powered inference for uploaded images and webcam frames
+- 🤖 **AI Gesture Detection** - Gemini Vision or Groq Llama vision inference for uploaded images and webcam frames
 - 📹 **Live Camera Stream** - Real-time detection through a websocket-driven webcam feed
 - 🖼️ **Image Upload** - Single-frame gesture detection from image files
 - 📊 **Detection Log** - Track recognized signs with timestamps and confidence scores
@@ -30,7 +33,7 @@ GestureSense is a modern sign-language detection app with a sleek TanStack Start
 
 ### Backend
 - **Framework:** FastAPI (Python)
-- **AI Integration:** Google Generative AI / Gemini Vision
+- **AI Integration:** Google Generative AI / Gemini Vision or Groq Llama vision
 - **Realtime:** WebSocket streaming for live camera frames
 - **CORS:** Enabled for local frontend development
 - **Environment Loading:** python-dotenv
