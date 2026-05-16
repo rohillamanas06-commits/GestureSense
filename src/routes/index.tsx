@@ -1,11 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   Camera, Upload, Loader2, Square,
   Activity, Github, Image as ImageIcon, Trash2, RefreshCw,
 } from "lucide-react";
-
-export const Route = createFileRoute("/")({ component: Index });
 
 type DetectResult = { detected: boolean; sign: string | null; confidence: number; processing_ms?: number };
 type LogEntry = { id: number; sign: string; confidence: number; ts: string; source: "live" | "upload" };
@@ -494,7 +491,7 @@ function LogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
 
 
 // ─── INDEX ───────────────────────────────────────────────────────────────────
-function Index() {
+export default function Index() {
   const [api, setApi] = useApi();
   const [refreshKey, setRefreshKey] = useState(0);
   const [status, health] = useHealth(api, refreshKey);

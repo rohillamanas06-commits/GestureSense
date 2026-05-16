@@ -1,8 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
-
-export const Route = createFileRoute("/about")({ component: About });
-
-function About() {
+export default function About() {
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-background/90 backdrop-blur sticky top-0 z-30">

@@ -1,6 +1,6 @@
 #  GestureSense - Sign Language Detection Console
 
-GestureSense is a modern sign-language detection app with a sleek TanStack Start frontend and a FastAPI backend powered by a configurable vision model. It supports live webcam detection, single-image uploads, and a real-time detection log for quick feedback.
+GestureSense is a modern sign-language detection app with a sleek Vite + React frontend and a FastAPI backend powered by a configurable vision model. It supports live webcam detection, single-image uploads, and a real-time detection log for quick feedback.
 
 ##  Screenshots
 
@@ -23,13 +23,13 @@ GestureSense is a modern sign-language detection app with a sleek TanStack Start
 ##  Tech Stack
 
 ### Frontend
-- **Framework:** TanStack Start + React
+- **Framework:** Vite + React
 - **Language:** TypeScript
 - **Build Tool:** Vite
 - **Styling:** Tailwind CSS
 - **UI Components:** Radix UI + custom components
-- **Routing:** TanStack Router
-- **State/Data:** React state hooks + TanStack Query
+- **Routing:** Lightweight client-side route switching
+- **State/Data:** React state hooks
 
 ### Backend
 - **Framework:** FastAPI (Python)
@@ -51,7 +51,7 @@ GestureSense is a modern sign-language detection app with a sleek TanStack Start
 1. Push code to GitHub
 2. Import project in Vercel dashboard
 3. Set `VITE_API_URL` environment variable to your Render backend URL
-4. Deploy — Vercel will build and deploy the TanStack frontend
+4. Deploy — Vercel will build and deploy the Vite frontend
 
 #### Local Setup
 1. Clone the repository
@@ -65,13 +65,14 @@ GestureSense is a modern sign-language detection app with a sleek TanStack Start
 
 ```text
 GestureSense/
+├── index.html
 ├── src/
+│   ├── App.tsx
 │   ├── components/
 │   │   └── ui/
 │   ├── hooks/
 │   ├── lib/
 │   ├── routes/
-│   │   ├── __root.tsx
 │   │   ├── index.tsx
 │   │   ├── about.tsx
 │   │   ├── faq.tsx
@@ -79,8 +80,7 @@ GestureSense/
 │   │   ├── terms.tsx
 │   │   ├── cookie.tsx
 │   │   └── license.tsx
-│   ├── router.tsx
-│   ├── server.ts
+│   ├── main.tsx
 │   └── styles.css
 ├── public/
 ├── gesturesense.py
