@@ -3,5 +3,4 @@ services:
     name: gesturesense-backend
     env: python
     plan: free
-    pythonVersion: 3.11.0
     buildCommand: pip install -r requirements.txt
